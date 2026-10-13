@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id), STORE='gestione-clienti-encrypted-v1', BACKUP_DATE='gestione-clienti-last-backup-v1';
 let db={clients:[]}, key=null, salt=null, active='home', editing=null, filter='all', previous='clienti';
 const THEME_KEY='gestione-clienti-theme-v1';
-function applyTheme(v){document.documentElement.dataset.theme=v==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):v}
+function applyTheme(v){const dark=v==='dark'||(v==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',dark?'dark':'light');document.documentElement.style.colorScheme=dark?'dark':'light';document.querySelector('meta[name="theme-color"]')?.setAttribute('content',dark?'#0d1423':'#0d63df')}
 const themePreference=localStorage.getItem(THEME_KEY)||'system';applyTheme(themePreference);
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{if((localStorage.getItem(THEME_KEY)||'system')==='system')applyTheme('system')});
 $('themeSelect').value=themePreference;$('themeSelect').onchange=e=>{localStorage.setItem(THEME_KEY,e.target.value);applyTheme(e.target.value);notify('Tema aggiornato')};

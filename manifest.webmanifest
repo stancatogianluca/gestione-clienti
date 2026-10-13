@@ -1,0 +1,1 @@
+{"name":"Gestione Clienti","short_name":"Clienti","description":"Archivio clienti e scadenze, protetto e offline","lang":"it","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f7fc","theme_color":"#0d63df","icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}

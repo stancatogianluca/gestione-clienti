@@ -38,7 +38,46 @@ function renderHistory(c){$('history').replaceChildren();if(!c.history?.length){
 $('renewBtn').onclick=async()=>{if(!editing)return;const v=formValues();if(!validate(v))return;const c=db.clients.find(x=>x.id===editing);if(!confirm(`Rinnovare ${c.name} con scadenza ${formatDate(v.expiry)}? Il pagamento sarà segnato come sospeso.`))return;Object.assign(c,v,{paid:v.kind==='free'});c.history.unshift({date:iso(),type:'Rinnovo manuale'+(v.kind==='free'?' (Free)':' - da pagare'),amount:c.amount,expiry:c.expiry});if(await persist()){alert('Rinnovo registrato');openEditor(c.id)}};
 $('markPaid').onclick=async()=>{const c=db.clients.find(x=>x.id===editing);if(!c||c.kind==='free')return;const v=formValues();if(!validate(v))return;if(!confirm(`Confermi il pagamento di ${euro(v.amount)} per ${v.name}?`))return;Object.assign(c,v,{paid:true});c.history.unshift({date:iso(),type:'Pagamento ricevuto',amount:c.amount,expiry:c.expiry});if(await persist()){alert('Pagamento confermato');openEditor(c.id)}};
 $('deleteClient').onclick=async()=>{const c=db.clients.find(x=>x.id===editing);if(c&&confirm(`Eliminare definitivamente ${c.name} e il suo storico?`)){db.clients=db.clients.filter(x=>x.id!==editing);if(await persist())show('clienti')}};
-$('exportBtn').onclick=()=>{const raw=localStorage.getItem(STORE);if(!raw)return;const blob=new Blob([raw],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`gestione-clienti-backup-${iso()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)};
-$('importFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>10000000)throw Error('File troppo grande');const raw=await f.text(),v=JSON.parse(raw);if(v.version!==1||!v.salt||!v.iv||!v.data)throw Error('Formato backup non valido');const pass=prompt('Inserisci la password principale del backup da importare');if(!pass)return;const k=await derive(pass,from64(v.salt));const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv:from64(v.iv)},k,from64(v.data));const parsed=JSON.parse(new TextDecoder().decode(decrypted));if(!Array.isArray(parsed.clients))throw Error('Dati non validi');if(confirm('Sostituire definitivamente tutti i clienti attuali con quelli del backup?')){localStorage.setItem(STORE,raw);db=parsed;key=k;salt=from64(v.salt);show('home');alert('Backup importato correttamente')}}catch{alert('Importazione non riuscita: file non valido o password errata')}finally{e.target.value=''}};
+// Backup: share sheet on iOS when supported; otherwise download via Files/Safari.
+$('exportBtn').onclick=async()=>{
+  const raw=localStorage.getItem(STORE);
+  if(!raw){alert('Nessun archivio da esportare');return}
+  const filename=`gestione-clienti-backup-${iso()}.json`;
+  const file=new File([raw],filename,{type:'application/json'});
+  try{
+    if(navigator.canShare?.({files:[file]})&&navigator.share){
+      await navigator.share({files:[file],title:'Backup cifrato Gestione Clienti'});
+      return;
+    }
+    const url=URL.createObjectURL(file),a=document.createElement('a');
+    a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    alert('Backup creato. Apri Download in Safari o File e spostalo su iCloud Drive.');
+  }catch(err){if(err?.name!=='AbortError')alert('Impossibile esportare il backup: '+err.message)}
+};
+$('importFile').onchange=async e=>{
+  const f=e.target.files?.[0];if(!f)return;
+  try{
+    if(f.size>10000000)throw Error('File troppo grande');
+    const raw=await f.text(),v=JSON.parse(raw);
+    if(v.version!==1||![v.salt,v.iv,v.data].every(x=>typeof x==='string'))throw Error('Formato backup non valido');
+    const backupSalt=from64(v.salt),backupIv=from64(v.iv),backupData=from64(v.data);
+    if(backupSalt.length!==16||backupIv.length!==12||backupData.length<16)throw Error('Formato backup non valido');
+    const pass=prompt('Inserisci la password principale usata per creare questo backup');
+    if(pass===null)return;
+    const candidate=await derive(pass,backupSalt);
+    const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv:backupIv},candidate,backupData);
+    const parsed=JSON.parse(new TextDecoder().decode(decrypted));
+    if(!parsed||!Array.isArray(parsed.clients)||parsed.clients.some(c=>!c||typeof c.name!=='string'||typeof c.expiry!=='string'||typeof c.id!=='string'))throw Error('Dati clienti non validi');
+    if(!confirm(`Backup verificato: ${parsed.clients.length} clienti. Vuoi sostituire TUTTI i dati presenti sull'iPhone? L'operazione non si può annullare.`))return;
+    // Commit the archive only after successful authentication and validation.
+    localStorage.setItem(STORE,raw);
+    db=parsed;key=candidate;salt=backupSalt;editing=null;
+    show('home');
+    alert(`Ripristino completato: ${parsed.clients.length} clienti caricati.`);
+  }catch(err){
+    alert('Ripristino non riuscito. I dati attuali non sono stati modificati. Controlla il file e la password. '+(err?.name==='QuotaExceededError'?'Spazio insufficiente.':''));
+  }finally{e.target.value=''}
+};
 $('eraseBtn').onclick=()=>{if(confirm('Eliminare DEFINITIVAMENTE tutti i dati locali? Assicurati di avere un backup.')&&confirm('Confermi la cancellazione?')){localStorage.removeItem(STORE);lockScreen()}};
 configureLock();if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));

@@ -196,3 +196,17 @@ $('csvImportFile').onchange=async e=>{
  };
  }catch(err){const p=document.createElement('p');p.className='notice red';p.textContent='CSV non importato: '+err.message;host.append(p)}
 };
+
+
+/* Bulk payment confirmation — existing encrypted local archive only */
+$('bulkPaidBtn').onclick=async()=>{
+ if(!key){alert('Sblocca prima l’archivio');return}
+ const pending=db.clients.filter(c=>c.kind==='pagante'&&!c.paid);
+ if(!pending.length){notify('Nessun pagamento da confermare');return}
+ const total=pending.reduce((sum,c)=>sum+(Number(c.amount)||0),0);
+ if(!await ask('Confermi che i pagamenti di '+pending.length+' clienti Pagante sono stati realmente ricevuti? Importo complessivo registrato: '+euro(total)+'. Scadenze, importi e credenziali resteranno invariati.','Conferma pagamenti in blocco'))return;
+ const snapshot=structuredClone(db);
+ const today=iso();
+ for(const c of pending){c.paid=true;if(!Array.isArray(c.history))c.history=[];c.history.unshift({date:today,type:'Pagamento confermato in blocco',amount:c.amount,expiry:c.expiry})}
+ if(await persist()){notify('Pagamenti confermati: '+pending.length);show('home')}else db=snapshot;
+};

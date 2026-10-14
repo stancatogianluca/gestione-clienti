@@ -148,3 +148,51 @@ $('importFile').onchange=async e=>{
 };
 $('eraseBtn').onclick=()=>{(async()=>{if(await ask('Eliminare DEFINITIVAMENTE tutti i dati locali? Assicurati di avere un backup.','Elimina archivio',true)&&await ask('Seconda conferma: tutti i dati locali saranno cancellati.','Conferma definitiva',true)){localStorage.removeItem(STORE);lockScreen()}})()};
 configureLock();if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+
+
+/* CSV import v1.3.2 — file parsed locally, never uploaded */
+function parseCsv(text){
+ text=text.replace(/^\uFEFF/,'');const first=text.split(/\r?\n/,1)[0]||'';
+ const delim=(first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?';':',';
+ const rows=[];let row=[],field='',quoted=false;
+ for(let i=0;i<text.length;i++){const c=text[i];
+  if(c==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted}
+  else if(c===delim&&!quoted){row.push(field);field=''}
+  else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&text[i+1]==='\n')i++;row.push(field);if(row.some(v=>v.trim()))rows.push(row);row=[];field=''}
+  else field+=c;
+ }
+ if(quoted)throw Error('Virgolette CSV non chiuse');
+ row.push(field);if(row.some(v=>v.trim()))rows.push(row);
+ if(!rows.length)throw Error('File vuoto');
+ const columns=rows.shift().map(x=>x.trim().toLowerCase().replace(/\s+/g,' '));
+ const required=['nome','username','password','tipo','scadenza','importo','pagato'];
+ if(required.some(c=>!columns.includes(c))||new Set(columns).size!==columns.length)throw Error('Intestazioni mancanti o duplicate: '+required.join(', '));
+ return rows.map((values,i)=>({line:i+2,data:Object.fromEntries(columns.map((k,j)=>[k,(values[j]||'').trim()]))}));
+}
+function csvDate(value){let m=value.match(/^(\d{4})-(\d{2})-(\d{2})$/);if(!m){const x=value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(x)m=[null,x[3],x[2].padStart(2,'0'),x[1].padStart(2,'0')]}if(!m)return null;const out=m[1]+'-'+m[2]+'-'+m[3],d=new Date(out+'T12:00:00');return !Number.isNaN(d.getTime())&&isoDateParts(d)===out?out:null}
+function isoDateParts(d){return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')}
+function normalizeCsvRow(x){const a=x.data,expiry=csvDate(a.scadenza),kind=/^(pagante|paid)$/i.test(a.tipo)?'pagante':/^(free|gratuito)$/i.test(a.tipo)?'free':null;
+ const amount=a.importo===''?0:Number(a.importo.replace(/\s/g,'').replace(',','.'));
+ const paid=a.pagato===''?false:/^(s[iì]|si|yes|true|1)$/i.test(a.pagato)?true:/^(no|false|0)$/i.test(a.pagato)?false:null;
+ if(!a.nome||!expiry||!kind||!Number.isFinite(amount)||amount<0||amount>1000000||paid===null)throw Error('Riga '+x.line+': controlla Nome, Tipo, Scadenza, Importo o Pagato');
+ return {name:a.nome.slice(0,120),username:a.username.slice(0,150),password:a.password.slice(0,300),kind,expiry,amount:kind==='free'?0:amount,paid:kind==='free'?true:paid};
+}
+function csvDuplicateKey(c){return (c.name||'').trim().toLocaleLowerCase('it')+'|'+(c.username||'').trim().toLocaleLowerCase('it')}
+let csvPending=null;
+$('csvImportFile').onchange=async e=>{
+ csvPending=null;const host=$('csvPreview');host.replaceChildren();const f=e.target.files?.[0];if(!f)return;
+ try{if(f.size>3e6)throw Error('File troppo grande (massimo 3 MB)');
+ const raw=await f.text(),rows=parseCsv(raw);if(rows.length>5000)throw Error('Troppi clienti (massimo 5000)');
+ const parsed=rows.map(normalizeCsvRow),existing=new Set(db.clients.map(csvDuplicateKey)),seen=new Set(),fresh=[],duplicates=[];
+ for(const c of parsed){const k=csvDuplicateKey(c);if(existing.has(k)||seen.has(k))duplicates.push(c);else{fresh.push(c);seen.add(k)}}
+ csvPending=fresh;
+ const p=document.createElement('p');p.className='notice';p.textContent='Righe valide: '+parsed.length+' · Nuovi: '+fresh.length+' · Duplicati saltati: '+duplicates.length+'. Importi vuoti = €0; Pagato vuoto = No. I clienti Free sono considerati pagati.';host.append(p);
+ const preview=document.createElement('div');preview.className='help';preview.textContent='Anteprima: '+fresh.slice(0,5).map(c=>c.name+' ('+c.kind+', '+c.expiry+')').join(' · ')+(fresh.length>5?' …':'');host.append(preview);
+ if(!fresh.length)return;
+ const btn=document.createElement('button');btn.type='button';btn.className='btn wide';btn.textContent='Conferma importazione di '+fresh.length+' clienti';host.append(btn);
+ btn.onclick=async()=>{if(!csvPending||!key)return;if(!await ask('Aggiungere '+csvPending.length+' nuovi clienti all’archivio cifrato? '+duplicates.length+' duplicati verranno saltati. I dati esistenti resteranno invariati.','Conferma importazione CSV'))return;
+ const before=db.clients.slice(),now=iso();db.clients.push(...csvPending.map(c=>({...c,id:crypto.randomUUID(),history:[],created:now})));
+ if(await persist()){notify('Importati '+csvPending.length+' clienti');csvPending=null;host.replaceChildren();$('csvImportFile').value='';show('clienti')}else db.clients=before;
+ };
+ }catch(err){const p=document.createElement('p');p.className='notice red';p.textContent='CSV non importato: '+err.message;host.append(p)}
+};
